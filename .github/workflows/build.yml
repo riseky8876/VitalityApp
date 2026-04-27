@@ -38,17 +38,14 @@ jobs:
       - name: 🔧 Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: 🛠️ Restore Gradle Wrapper JAR
+      - name: 📦 Download gradle-wrapper.jar
         run: |
-          if [ ! -f gradle/wrapper/gradle-wrapper.jar ]; then
-            echo "JAR tidak ditemukan, mendownload dari sumber resmi..."
-            mkdir -p gradle/wrapper
-            curl -L https://raw.githubusercontent.com/gradle/gradle/master/gradle/wrapper/gradle-wrapper.jar -o gradle/wrapper/gradle-wrapper.jar
-          else
-            echo "Gradle Wrapper JAR sudah ada."
-          fi
+          mkdir -p gradle/wrapper
+          curl -sL "https://github.com/gradle/gradle/raw/v8.9.0/gradle/wrapper/gradle-wrapper.jar" \
+            -o gradle/wrapper/gradle-wrapper.jar
+          echo "✅ gradle-wrapper.jar: $(ls -lh gradle/wrapper/gradle-wrapper.jar)"
 
-      - name: 📋 Grant execute permission untuk Gradle
+      - name: 📋 Grant execute permission
         run: chmod +x gradlew
 
       - name: 🏗️ Build Debug APK
@@ -61,6 +58,10 @@ jobs:
         with:
           name: vitality-debug-apk
           path: app/build/outputs/apk/debug/*.apk
+          retention-days: 30
+
+      - name: 📊 Show APK info
+        run: find app/build/outputs/apk -name "*.apk" -exec ls -lh {} \;
 
   # ──────────────────────────────────────────
   # JOB 2: Build Release APK
@@ -84,29 +85,30 @@ jobs:
       - name: 🔧 Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: 🛠️ Restore Gradle Wrapper JAR
+      - name: 📦 Download gradle-wrapper.jar
         run: |
           mkdir -p gradle/wrapper
-          curl -L https://raw.githubusercontent.com/gradle/gradle/master/gradle/wrapper/gradle-wrapper.jar -o gradle/wrapper/gradle-wrapper.jar
+          curl -sL "https://github.com/gradle/gradle/raw/v8.9.0/gradle/wrapper/gradle-wrapper.jar" \
+            -o gradle/wrapper/gradle-wrapper.jar
+          echo "✅ gradle-wrapper.jar: $(ls -lh gradle/wrapper/gradle-wrapper.jar)"
 
       - name: 📋 Grant execute permission
         run: chmod +x gradlew
 
-      - name: 🔑 Setup Keystore
-        # FIX: Menggunakan pembungkus ${{ }} untuk akses secrets di level step
-        if: ${{ secrets.KEYSTORE_BASE64 != '' }}
-        run: |
-          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > app/vitality-release.keystore
-          echo "Keystore decoded successfully"
-
-      - name: 🏗️ Build Release APK (unsigned)
-        if: ${{ secrets.KEYSTORE_BASE64 == '' }}
-        run: ./gradlew assembleRelease --stacktrace
+      - name: 🔑 Decode Keystore (jika ada)
         env:
-          GRADLE_OPTS: "-Dorg.gradle.daemon=false -Xmx4g"
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 --decode > app/vitality-release.keystore
+            echo "KEYSTORE_EXISTS=true" >> $GITHUB_ENV
+            echo "✅ Keystore decoded"
+          else
+            echo "KEYSTORE_EXISTS=false" >> $GITHUB_ENV
+            echo "⚠️  No keystore, building unsigned"
+          fi
 
-      - name: 🏗️ Build Release APK (signed)
-        if: ${{ secrets.KEYSTORE_BASE64 != '' }}
+      - name: 🏗️ Build Release APK
         run: ./gradlew assembleRelease --stacktrace
         env:
           GRADLE_OPTS: "-Dorg.gradle.daemon=false -Xmx4g"
@@ -119,9 +121,10 @@ jobs:
         with:
           name: vitality-release-apk
           path: app/build/outputs/apk/release/*.apk
+          retention-days: 90
 
   # ──────────────────────────────────────────
-  # JOB 3: Auto Release
+  # JOB 3: Auto Release saat tag v* dibuat
   # ──────────────────────────────────────────
   create-release:
     name: 🎉 Create GitHub Release
@@ -133,10 +136,21 @@ jobs:
       - name: 📥 Checkout
         uses: actions/checkout@v4
 
-      - name: 🛠️ Restore Gradle Wrapper JAR
+      - name: ☕ Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: 🔧 Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: 📦 Download gradle-wrapper.jar
         run: |
           mkdir -p gradle/wrapper
-          curl -L https://raw.githubusercontent.com/gradle/gradle/master/gradle/wrapper/gradle-wrapper.jar -o gradle/wrapper/gradle-wrapper.jar
+          curl -sL "https://github.com/gradle/gradle/raw/v8.9.0/gradle/wrapper/gradle-wrapper.jar" \
+            -o gradle/wrapper/gradle-wrapper.jar
 
       - name: 📋 Grant execute permission
         run: chmod +x gradlew
@@ -154,6 +168,28 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           name: "Vitality ${{ steps.version.outputs.VERSION }}"
+          body: |
+            ## 🌿 Vitality ${{ steps.version.outputs.VERSION }}
+
+            ### ✨ Fitur
+            - 🌀 Vitality Ring — skor kesehatan 0-100 dengan animasi
+            - 🔋 Analisis baterai mendalam (kapasitas, siklus, suhu)
+            - 💾 Monitor RAM + zRAM
+            - 📦 Kesehatan & estimasi umur storage
+            - ⚡ Detektor aplikasi boros daya
+            - 🧹 Optimasi 1-tap (cache + memori)
+            - 📊 Riwayat kesehatan harian
+
+            ### 📱 Kompatibilitas
+            - Android 8.0+ (API 26+)
+            - Root opsional (KernelSU / Magisk)
+
+            ### 📥 Cara Install
+            1. Download APK di bawah
+            2. Aktifkan "Install dari sumber tidak dikenal"
+            3. Install dan nikmati!
           files: app/build/outputs/apk/release/*.apk
+          draft: false
+          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
