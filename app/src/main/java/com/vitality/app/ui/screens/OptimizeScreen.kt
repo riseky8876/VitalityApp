@@ -13,7 +13,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -45,7 +45,6 @@ fun OptimizeScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(20.dp),
         ) {
-            // Header
             Row(
                 modifier          = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -68,22 +67,20 @@ fun OptimizeScreen(
 
             Spacer(modifier = Modifier.height(20.dp))
 
-            // Main optimize card
             NeuCard(modifier = Modifier.fillMaxWidth(), cornerRadius = 24.dp) {
                 Column(
                     modifier            = Modifier.fillMaxWidth(),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    // Animated icon
                     OptimizeIconAnimated(isRunning = isRunning)
 
                     Spacer(modifier = Modifier.height(12.dp))
 
                     Text(
                         text       = when {
-                            optimizationState == null          -> "Siap Mengoptimalkan"
-                            optimizationState!!.isCompleted    -> "Selesai! 🎉"
-                            else                               -> "Sedang Mengoptimalkan…"
+                            optimizationState == null       -> "Siap Mengoptimalkan"
+                            optimizationState!!.isCompleted -> "Selesai! 🎉"
+                            else                            -> "Sedang Mengoptimalkan…"
                         },
                         fontSize   = 20.sp,
                         fontWeight = FontWeight.Bold,
@@ -105,7 +102,6 @@ fun OptimizeScreen(
                         lineHeight = 19.sp,
                     )
 
-                    // Result summary when done
                     if (optimizationState?.isCompleted == true) {
                         Spacer(modifier = Modifier.height(16.dp))
                         ResultSummary(result = optimizationState!!)
@@ -113,7 +109,6 @@ fun OptimizeScreen(
                 }
             }
 
-            // Steps list
             if (optimizationState != null) {
                 Spacer(modifier = Modifier.height(16.dp))
                 OptimizationStepsList(steps = optimizationState!!.steps)
@@ -121,7 +116,6 @@ fun OptimizeScreen(
 
             Spacer(modifier = Modifier.height(20.dp))
 
-            // Action button
             if (!isRunning) {
                 NeuCard(
                     modifier     = Modifier
@@ -161,7 +155,6 @@ fun OptimizeScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Safety note
             NeuCard(modifier = Modifier.fillMaxWidth(), cornerRadius = 14.dp) {
                 Row(verticalAlignment = Alignment.Top) {
                     Icon(
@@ -185,16 +178,22 @@ fun OptimizeScreen(
 
 @Composable
 private fun OptimizeIconAnimated(isRunning: Boolean) {
+    // Fix: separate animated vs static, avoid type mismatch between
+    // InfiniteRepeatableSpec and SnapSpec in single animateFloat call
     val infiniteTransition = rememberInfiniteTransition(label = "rotate")
-    val rotation by infiniteTransition.animateFloat(
+
+    val infiniteRotation by infiniteTransition.animateFloat(
         initialValue  = 0f,
-        targetValue   = if (isRunning) 360f else 0f,
-        animationSpec = if (isRunning) infiniteRepeatable(
+        targetValue   = 360f,
+        animationSpec = infiniteRepeatable(
             animation  = tween(1500, easing = LinearEasing),
             repeatMode = RepeatMode.Restart,
-        ) else snap(),
-        label = "iconRotate",
+        ),
+        label = "iconRotateInfinite",
     )
+
+    // Use infinite rotation only when running, otherwise show static icon
+    val rotation = if (isRunning) infiniteRotation else 0f
 
     Box(
         modifier         = Modifier
@@ -209,10 +208,7 @@ private fun OptimizeIconAnimated(isRunning: Boolean) {
             tint               = BrandTeal,
             modifier           = Modifier
                 .size(40.dp)
-                .then(
-                    if (isRunning) Modifier.graphicsLayer { rotationZ = rotation }
-                    else Modifier
-                ),
+                .graphicsLayer { rotationZ = rotation },
         )
     }
 }
@@ -247,62 +243,59 @@ private fun OptimizationStepItem(step: OptimizationStep, index: Int) {
         else             -> TextTertiary
     }
 
-    AnimatedContent(
-        targetState   = step.isRunning,
-        transitionSpec = { fadeIn() togetherWith fadeOut() },
-        label          = "step_$index",
-    ) { running ->
-        Row(
-            modifier          = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
+    Row(
+        modifier          = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier         = Modifier
+                .size(32.dp)
+                .clip(CircleShape)
+                .background(color.copy(alpha = 0.15f)),
+            contentAlignment = Alignment.Center,
         ) {
-            // Step indicator
-            Box(
-                modifier         = Modifier
-                    .size(32.dp)
-                    .clip(CircleShape)
-                    .background(color.copy(alpha = 0.15f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                if (step.isRunning) {
-                    CircularProgressIndicator(
-                        modifier    = Modifier.size(18.dp),
-                        color       = BrandTeal,
-                        strokeWidth = 2.dp,
-                    )
-                } else if (step.isCompleted) {
-                    Icon(
-                        imageVector        = Icons.Rounded.Check,
-                        contentDescription = null,
-                        tint               = HealthyGreen,
-                        modifier           = Modifier.size(16.dp),
-                    )
-                } else {
-                    Text(
-                        text      = "${index + 1}",
-                        fontSize  = 12.sp,
-                        color     = TextTertiary,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.width(12.dp))
-
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text       = step.title,
-                    fontSize   = 13.sp,
-                    fontWeight = if (step.isRunning) FontWeight.SemiBold else FontWeight.Normal,
-                    color      = if (step.isRunning) TextPrimary else if (step.isCompleted) HealthyGreenDark else TextTertiary,
+            if (step.isRunning) {
+                CircularProgressIndicator(
+                    modifier    = Modifier.size(18.dp),
+                    color       = BrandTeal,
+                    strokeWidth = 2.dp,
                 )
-                if (step.isRunning || step.isCompleted) {
-                    Text(
-                        text      = step.description,
-                        fontSize  = 11.sp,
-                        color     = TextTertiary,
-                    )
-                }
+            } else if (step.isCompleted) {
+                Icon(
+                    imageVector        = Icons.Rounded.Check,
+                    contentDescription = null,
+                    tint               = HealthyGreen,
+                    modifier           = Modifier.size(16.dp),
+                )
+            } else {
+                Text(
+                    text       = "${index + 1}",
+                    fontSize   = 12.sp,
+                    color      = TextTertiary,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.width(12.dp))
+
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text       = step.title,
+                fontSize   = 13.sp,
+                fontWeight = if (step.isRunning) FontWeight.SemiBold else FontWeight.Normal,
+                color      = when {
+                    step.isRunning   -> TextPrimary
+                    step.isCompleted -> HealthyGreenDark
+                    else             -> TextTertiary
+                },
+            )
+            if (step.isRunning || step.isCompleted) {
+                Text(
+                    text     = step.description,
+                    fontSize = 11.sp,
+                    color    = TextTertiary,
+                )
             }
         }
     }
