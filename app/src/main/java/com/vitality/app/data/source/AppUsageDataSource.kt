@@ -4,6 +4,7 @@ import android.app.AppOpsManager
 import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Process
 import android.util.Log
 import com.vitality.app.data.model.AppPowerInfo
@@ -17,7 +18,8 @@ object AppUsageDataSource {
     suspend fun getTopPowerApps(context: Context): List<AppPowerInfo> = withContext(Dispatchers.IO) {
         try {
             if (!hasUsageStatsPermission(context)) {
-                return@withContext getFallbackApps()
+                Log.w(TAG, "No usage stats permission")
+                return@withContext emptyList()
             }
 
             val usageStatsManager = context.getSystemService(Context.USAGE_STATS_SERVICE)
@@ -29,23 +31,29 @@ object AppUsageDataSource {
 
             val stats = usageStatsManager.queryUsageStats(
                 UsageStatsManager.INTERVAL_DAILY, startTime, endTime
-            ) ?: return@withContext getFallbackApps()
+            )
 
-            val totalForegroundMs = stats.sumOf { it.totalTimeInForeground }.takeIf { it > 0 } ?: 1L
+            if (stats.isNullOrEmpty()) {
+                Log.w(TAG, "No usage stats returned (empty)")
+                return@withContext emptyList()
+            }
+
+            Log.d(TAG, "Got ${stats.size} usage stats entries")
+
+            val totalForegroundMs = stats.sumOf { it.totalTimeInForeground }
+                .takeIf { it > 0 } ?: 1L
 
             stats
-                .filter { it.totalTimeInForeground > 60_000L || it.packageName != "android" }
+                .filter { it.totalTimeInForeground > 60_000L }
                 .sortedByDescending { it.totalTimeInForeground }
                 .take(10)
                 .mapNotNull { stat ->
                     try {
                         val appInfo = pm.getApplicationInfo(stat.packageName, 0)
                         val appName = pm.getApplicationLabel(appInfo).toString()
-                        val bgTimeMin = (stat.totalTimeInForeground / 60_000L)
-                        val usagePercent = (stat.totalTimeInForeground.toFloat() / totalForegroundMs * 100f)
-                            .coerceIn(0f, 100f)
-
-                        // Estimate wake count from app category
+                        val bgTimeMin = stat.totalTimeInForeground / 60_000L
+                        val usagePercent = (stat.totalTimeInForeground.toFloat() /
+                                totalForegroundMs * 100f).coerceIn(0f, 100f)
                         val wakeCount = estimateWakeCount(stat.packageName, bgTimeMin)
 
                         AppPowerInfo(
@@ -59,17 +67,17 @@ object AppUsageDataSource {
                     } catch (e: PackageManager.NameNotFoundException) {
                         null
                     } catch (e: Exception) {
+                        Log.w(TAG, "Error mapping app ${stat.packageName}", e)
                         null
                     }
                 }
         } catch (e: Exception) {
             Log.e(TAG, "Error getting app usage", e)
-            getFallbackApps()
+            emptyList()
         }
     }
 
     private fun estimateWakeCount(packageName: String, bgTimeMin: Long): Int {
-        // Estimate based on known heavy-hitters
         return when {
             packageName.contains("whatsapp", true)  -> (bgTimeMin / 2).toInt().coerceIn(0, 200)
             packageName.contains("tiktok", true)    -> (bgTimeMin / 3).toInt().coerceIn(0, 150)
@@ -84,16 +92,26 @@ object AppUsageDataSource {
     fun hasUsageStatsPermission(context: Context): Boolean {
         return try {
             val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
-            val mode = appOps.checkOpNoThrow(
-                AppOpsManager.OPSTR_GET_USAGE_STATS,
-                Process.myUid(),
-                context.packageName
-            )
-            mode == AppOpsManager.MODE_ALLOWED
+            val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                appOps.unsafeCheckOpNoThrow(
+                    AppOpsManager.OPSTR_GET_USAGE_STATS,
+                    Process.myUid(),
+                    context.packageName
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                appOps.checkOpNoThrow(
+                    AppOpsManager.OPSTR_GET_USAGE_STATS,
+                    Process.myUid(),
+                    context.packageName
+                )
+            }
+            val granted = mode == AppOpsManager.MODE_ALLOWED
+            Log.d(TAG, "Usage stats permission: $granted (mode=$mode)")
+            granted
         } catch (e: Exception) {
+            Log.e(TAG, "Error checking usage stats permission", e)
             false
         }
     }
-
-    private fun getFallbackApps(): List<AppPowerInfo> = emptyList()
 }
