@@ -38,7 +38,6 @@ jobs:
       - name: 🔧 Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      # FIX 1: Otomatis download gradle-wrapper.jar jika tidak ada di repo
       - name: 🛠️ Restore Gradle Wrapper JAR
         run: |
           if [ ! -f gradle/wrapper/gradle-wrapper.jar ]; then
@@ -52,26 +51,16 @@ jobs:
       - name: 📋 Grant execute permission untuk Gradle
         run: chmod +x gradlew
 
-      - name: 🔍 Validasi project structure
-        run: |
-          echo "=== Project files ==="
-          ls -la
-          echo "=== App module ==="
-          ls -la app/
-          echo "=== Gradle version ==="
-          ./gradlew --version
-
       - name: 🏗️ Build Debug APK
         run: ./gradlew assembleDebug --stacktrace
         env:
-          GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.parallel=true -Dorg.gradle.configureondemand=true -Xmx4g"
+          GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.parallel=true -Xmx4g"
 
       - name: 📦 Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
           name: vitality-debug-apk
           path: app/build/outputs/apk/debug/*.apk
-          retention-days: 30
 
   # ──────────────────────────────────────────
   # JOB 2: Build Release APK
@@ -95,7 +84,6 @@ jobs:
       - name: 🔧 Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      # FIX 1: Restore JAR untuk job release
       - name: 🛠️ Restore Gradle Wrapper JAR
         run: |
           mkdir -p gradle/wrapper
@@ -104,8 +92,68 @@ jobs:
       - name: 📋 Grant execute permission
         run: chmod +x gradlew
 
-      - name: 🔑 Setup Keystore (jika ada secrets)
-        # FIX 2: Perbaikan sintaks 'if' (tanpa kurung kurawal ${{ }})
-        if: secrets.KEYSTORE_BASE64 != ''
+      - name: 🔑 Setup Keystore
+        # FIX: Menggunakan sintaks yang lebih aman untuk mengecek secret
+        if: "${{ secrets.KEYSTORE_BASE64 != '' }}"
         run: |
-          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode >
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > app/vitality-release.keystore
+          echo "Keystore decoded successfully"
+
+      - name: 🏗️ Build Release APK (unsigned)
+        if: "${{ secrets.KEYSTORE_BASE64 == '' }}"
+        run: ./gradlew assembleRelease --stacktrace
+        env:
+          GRADLE_OPTS: "-Dorg.gradle.daemon=false -Xmx4g"
+
+      - name: 🏗️ Build Release APK (signed)
+        if: "${{ secrets.KEYSTORE_BASE64 != '' }}"
+        run: ./gradlew assembleRelease --stacktrace
+        env:
+          GRADLE_OPTS: "-Dorg.gradle.daemon=false -Xmx4g"
+          SIGNING_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          SIGNING_STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+
+      - name: 📦 Upload Release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: vitality-release-apk
+          path: app/build/outputs/apk/release/*.apk
+
+  # ──────────────────────────────────────────
+  # JOB 3: Auto Release
+  # ──────────────────────────────────────────
+  create-release:
+    name: 🎉 Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [build-debug, build-release]
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🛠️ Restore Gradle Wrapper JAR
+        run: |
+          mkdir -p gradle/wrapper
+          curl -L https://raw.githubusercontent.com/gradle/gradle/master/gradle/wrapper/gradle-wrapper.jar -o gradle/wrapper/gradle-wrapper.jar
+
+      - name: 📋 Grant execute permission
+        run: chmod +x gradlew
+
+      - name: 🏗️ Build Release APK
+        run: ./gradlew assembleRelease --stacktrace
+        env:
+          GRADLE_OPTS: "-Dorg.gradle.daemon=false -Xmx4g"
+
+      - name: 🏷️ Get version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: 🚀 Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Vitality ${{ steps.version.outputs.VERSION }}"
+          files: app/build/outputs/apk/release/*.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
