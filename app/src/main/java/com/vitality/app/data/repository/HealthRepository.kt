@@ -34,26 +34,34 @@ class HealthRepository(private val context: Context) {
     // ─────────────────────────────────────────
 
     suspend fun loadAllData() {
-        _healthData.value = _healthData.value.copy(isLoading = true)
+        _healthData.value = _healthData.value.copy(isLoading = true, errorMessage = null)
 
-        val hasRoot    = RootDataSource.hasRootAccess()
-        val battery    = RootDataSource.readBatteryInfo()
-        val ram        = RootDataSource.readRamInfo()
-        val storage    = RootDataSource.readStorageInfo(context)
-        val apps       = AppUsageDataSource.getTopPowerApps(context)
+        try {
+            val hasRoot = RootDataSource.hasRootAccess()
+            // Pass context so BatteryManager API can be used
+            val battery = RootDataSource.readBatteryInfo(context)
+            val ram     = RootDataSource.readRamInfo()
+            val storage = RootDataSource.readStorageInfo(context)
+            val apps    = AppUsageDataSource.getTopPowerApps(context)
 
-        val newData = DeviceHealthData(
-            batteryInfo    = battery,
-            ramInfo        = ram,
-            storageInfo    = storage,
-            appPowerList   = apps,
-            lastUpdated    = System.currentTimeMillis(),
-            isLoading      = false,
-            hasRootAccess  = hasRoot,
-        )
+            val newData = DeviceHealthData(
+                batteryInfo   = battery,
+                ramInfo       = ram,
+                storageInfo   = storage,
+                appPowerList  = apps,
+                lastUpdated   = System.currentTimeMillis(),
+                isLoading     = false,
+                hasRootAccess = hasRoot,
+            )
 
-        _healthData.value = newData
-        saveHealthHistory(newData)
+            _healthData.value = newData
+            saveHealthHistory(newData)
+        } catch (e: Exception) {
+            _healthData.value = _healthData.value.copy(
+                isLoading    = false,
+                errorMessage = e.message,
+            )
+        }
     }
 
     // ─────────────────────────────────────────
@@ -64,14 +72,13 @@ class HealthRepository(private val context: Context) {
         val history = loadHistoryFromPrefs().toMutableList()
         history.add(
             HealthHistory(
-                date          = System.currentTimeMillis(),
-                overallScore  = data.overallScore,
-                batteryScore  = data.batteryInfo.healthScore,
-                ramScore      = data.ramInfo.healthScore,
-                storageScore  = data.storageInfo.healthScore,
+                date         = System.currentTimeMillis(),
+                overallScore = data.overallScore,
+                batteryScore = data.batteryInfo.healthScore,
+                ramScore     = data.ramInfo.healthScore,
+                storageScore = data.storageInfo.healthScore,
             )
         )
-        // Keep last 30 days
         val trimmed = if (history.size > 30) history.takeLast(30) else history
         prefs.edit().putString("health_history", gson.toJson(trimmed)).apply()
         _historyData.value = trimmed
@@ -100,54 +107,33 @@ class HealthRepository(private val context: Context) {
     ): OptimizationResult = withContext(Dispatchers.IO) {
 
         val steps = mutableListOf(
-            OptimizationStep("Memeriksa file sementara…", "Mencari file yang tidak lagi diperlukan"),
+            OptimizationStep("Memeriksa file sementara…",   "Mencari file yang tidak lagi diperlukan"),
             OptimizationStep("Membersihkan cache aplikasi…", "Menghapus data cache yang menumpuk"),
-            OptimizationStep("Merapikan memori…", "Membebaskan memori dari proses tidak aktif"),
-            OptimizationStep("Mengoptimalkan penyimpanan…", "Merapikan struktur file internal"),
-            OptimizationStep("Selesai ✔", "Perangkat Anda kini lebih segar!"),
+            OptimizationStep("Merapikan memori…",            "Membebaskan memori dari proses tidak aktif"),
+            OptimizationStep("Mengoptimalkan penyimpanan…",  "Merapikan struktur file internal"),
+            OptimizationStep("Selesai ✔",                   "Perangkat Anda kini lebih segar!"),
         )
 
         var freedStorage = 0f
         var freedRam     = 0f
 
-        steps.forEachIndexed { index, step ->
-            // Update: current step running
+        steps.forEachIndexed { index, _ ->
             val runningSteps = steps.mapIndexed { i, s ->
-                s.copy(
-                    isCompleted = i < index,
-                    isRunning   = i == index,
-                )
+                s.copy(isCompleted = i < index, isRunning = i == index)
             }
-            onStepUpdate(
-                OptimizationResult(
-                    freedStorageMb = freedStorage,
-                    freedRamMb     = freedRam,
-                    steps          = runningSteps,
-                    isCompleted    = false,
-                )
-            )
+            onStepUpdate(OptimizationResult(
+                freedStorageMb = freedStorage,
+                freedRamMb     = freedRam,
+                steps          = runningSteps,
+                isCompleted    = false,
+            ))
 
-            // Actually perform the action
             when (index) {
-                0 -> {
-                    delay(1200)
-                    freedStorage += clearAppCacheViaRoot()
-                }
-                1 -> {
-                    delay(1500)
-                    freedStorage += 15f // estimated from cache dirs
-                }
-                2 -> {
-                    delay(1000)
-                    freedRam += trimRamViaRoot()
-                }
-                3 -> {
-                    delay(1800)
-                    freedStorage += runFstrimViaRoot()
-                }
-                4 -> {
-                    delay(800)
-                }
+                0 -> { delay(1200); freedStorage += clearCacheViaRoot() }
+                1 -> { delay(1500); freedStorage += 15f }
+                2 -> { delay(1000); freedRam += trimRamViaRoot() }
+                3 -> { delay(1800); runFstrimViaRoot() }
+                4 -> { delay(800) }
             }
         }
 
@@ -161,41 +147,24 @@ class HealthRepository(private val context: Context) {
         finalResult
     }
 
-    private suspend fun clearAppCacheViaRoot(): Float {
-        return try {
-            // Safe: only clears cache directories, not data
-            val output = RootDataSource.runRootCommand(
-                "du -sm /data/data/*/cache 2>/dev/null | awk '{sum += \$1} END {print sum}'"
-            )
-            val beforeMb = output.trim().toFloatOrNull() ?: 0f
-            RootDataSource.runRootCommand("rm -rf /data/data/*/cache/* 2>/dev/null")
-            beforeMb.coerceIn(0f, 500f)
-        } catch (e: Exception) {
-            12f
-        }
-    }
+    private suspend fun clearCacheViaRoot(): Float = try {
+        val output = RootDataSource.runRootCommand(
+            "du -sm /data/data/*/cache 2>/dev/null | awk '{sum += \$1} END {print sum}'"
+        )
+        val beforeMb = output.trim().toFloatOrNull() ?: 0f
+        RootDataSource.runRootCommand("rm -rf /data/data/*/cache/* 2>/dev/null")
+        beforeMb.coerceIn(0f, 500f)
+    } catch (e: Exception) { 12f }
 
-    private suspend fun trimRamViaRoot(): Float {
-        return try {
-            // Sync filesystem buffers (safe, standard Linux operation)
-            RootDataSource.runRootCommand("sync")
-            // Drop pagecache (safe on Android, does not affect running apps)
-            RootDataSource.runRootCommand("echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true")
-            val memAfter = RootDataSource.readRamInfo()
-            50f // conservative estimate
-        } catch (e: Exception) {
-            30f
-        }
-    }
+    private suspend fun trimRamViaRoot(): Float = try {
+        RootDataSource.runRootCommand("sync")
+        RootDataSource.runRootCommand("echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true")
+        50f
+    } catch (e: Exception) { 30f }
 
-    private suspend fun runFstrimViaRoot(): Float {
-        return try {
-            // fstrim on data partition — safe, standard maintenance
-            RootDataSource.runRootCommand("fstrim /data 2>/dev/null || true")
-            0f // fstrim doesn't "free" space, it optimizes flash
-        } catch (e: Exception) {
-            0f
-        }
+    private suspend fun runFstrimViaRoot() {
+        try { RootDataSource.runRootCommand("fstrim /data 2>/dev/null || true") }
+        catch (e: Exception) { /* ignore */ }
     }
 
     fun hasUsagePermission(): Boolean =
