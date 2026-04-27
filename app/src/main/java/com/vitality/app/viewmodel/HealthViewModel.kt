@@ -20,27 +20,22 @@ class HealthViewModel(application: Application) : AndroidViewModel(application) 
 
     private val repository = HealthRepository(application)
 
-    // Health data state
     private val _uiState = MutableStateFlow(DeviceHealthData())
     val uiState: StateFlow<DeviceHealthData> = _uiState.asStateFlow()
 
-    // History state
     private val _historyState = MutableStateFlow<List<HealthHistory>>(emptyList())
     val historyState: StateFlow<List<HealthHistory>> = _historyState.asStateFlow()
 
-    // Optimization state
     private val _optimizationState = MutableStateFlow<OptimizationResult?>(null)
     val optimizationState: StateFlow<OptimizationResult?> = _optimizationState.asStateFlow()
 
-    // Permission state
     private val _hasUsagePermission = MutableStateFlow(false)
     val hasUsagePermission: StateFlow<Boolean> = _hasUsagePermission.asStateFlow()
 
-    // Refresh state
     private val _isRefreshing = MutableStateFlow(false)
     val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
 
-    private var refreshJob: Job? = null
+    private var autoRefreshJob: Job? = null
 
     init {
         observeData()
@@ -61,6 +56,7 @@ class HealthViewModel(application: Application) : AndroidViewModel(application) 
     fun loadData() {
         viewModelScope.launch {
             _isRefreshing.value = true
+            // Re-check permission every time (fixes the "already granted but still showing" bug)
             _hasUsagePermission.value = repository.hasUsagePermission()
             repository.loadHistory()
             repository.loadAllData()
@@ -68,16 +64,30 @@ class HealthViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    /** Called from pull-to-refresh gesture */
     fun refresh() {
+        if (_isRefreshing.value) return
         loadData()
     }
 
-    // Auto-refresh every 30 seconds
+    /** Called when app comes back to foreground — re-check permissions */
+    fun onResume() {
+        val newPermState = repository.hasUsagePermission()
+        if (newPermState != _hasUsagePermission.value) {
+            _hasUsagePermission.value = newPermState
+            // If permission was just granted, reload data to get apps
+            if (newPermState) loadData()
+        }
+    }
+
+    /** Auto-refresh every 15 seconds for realtime feel */
     private fun startAutoRefresh() {
-        refreshJob?.cancel()
-        refreshJob = viewModelScope.launch {
+        autoRefreshJob?.cancel()
+        autoRefreshJob = viewModelScope.launch {
             while (true) {
-                delay(30_000)
+                delay(15_000L)
+                // Silent refresh (don't show loading spinner for auto-refresh)
+                _hasUsagePermission.value = repository.hasUsagePermission()
                 repository.loadAllData()
             }
         }
@@ -92,7 +102,6 @@ class HealthViewModel(application: Application) : AndroidViewModel(application) 
             repository.runOptimization { result ->
                 _optimizationState.value = result
             }
-            // Refresh data after optimization
             delay(500)
             repository.loadAllData()
         }
@@ -104,6 +113,6 @@ class HealthViewModel(application: Application) : AndroidViewModel(application) 
 
     override fun onCleared() {
         super.onCleared()
-        refreshJob?.cancel()
+        autoRefreshJob?.cancel()
     }
 }
