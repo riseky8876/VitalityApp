@@ -9,16 +9,21 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.vitality.app.data.model.*
 import com.vitality.app.ui.components.*
@@ -37,14 +42,31 @@ fun DashboardScreen(
     onNavigateToOptimize: () -> Unit,
     onNavigateToHistory: () -> Unit,
 ) {
-    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    val isRefreshing by viewModel.isRefreshing.collectAsStateWithLifecycle()
-    val context = LocalContext.current
+    val uiState        by viewModel.uiState.collectAsStateWithLifecycle()
+    val isRefreshing   by viewModel.isRefreshing.collectAsStateWithLifecycle()
+    val context        = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
 
-    Box(
-        modifier = Modifier
+    // Re-check permissions when returning from Settings
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                viewModel.onResume()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    val pullToRefreshState = rememberPullToRefreshState()
+
+    PullToRefreshBox(
+        isRefreshing = isRefreshing,
+        onRefresh    = { viewModel.refresh() },
+        state        = pullToRefreshState,
+        modifier     = Modifier
             .fillMaxSize()
-            .background(NeuBackground)
+            .background(NeuBackground),
     ) {
         LazyColumn(
             modifier            = Modifier.fillMaxSize(),
@@ -66,14 +88,13 @@ fun DashboardScreen(
                 )
             }
 
-            // ── Loading skeleton or content
             if (uiState.isLoading) {
                 item { LoadingCard() }
             } else {
                 // ── Vitality Ring
                 item {
                     VitalityRingSection(
-                        data            = uiState,
+                        data                = uiState,
                         onNavigateToHistory = onNavigateToHistory,
                     )
                 }
@@ -82,10 +103,7 @@ fun DashboardScreen(
                 item {
                     NeuCard(modifier = Modifier.fillMaxWidth()) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                text      = "💬",
-                                fontSize  = 24.sp,
-                            )
+                            Text(text = "💬", fontSize = 24.sp)
                             Spacer(modifier = Modifier.width(12.dp))
                             Text(
                                 text       = uiState.overallMessage,
@@ -101,10 +119,10 @@ fun DashboardScreen(
                 // ── Quick stats row
                 item {
                     QuickStatsRow(
-                        data            = uiState,
-                        onBatteryClick  = onNavigateToBattery,
-                        onRamClick      = { /* scroll */ },
-                        onStorageClick  = onNavigateToStorage,
+                        data           = uiState,
+                        onBatteryClick = onNavigateToBattery,
+                        onRamClick     = {},
+                        onStorageClick = onNavigateToStorage,
                     )
                 }
 
@@ -117,9 +135,7 @@ fun DashboardScreen(
                 }
 
                 // ── RAM card
-                item {
-                    RamCard(ram = uiState.ramInfo)
-                }
+                item { RamCard(ram = uiState.ramInfo) }
 
                 // ── Storage card
                 item {
@@ -129,7 +145,7 @@ fun DashboardScreen(
                     )
                 }
 
-                // ── App power card
+                // ── App power card (or permission request)
                 item {
                     if (uiState.appPowerList.isNotEmpty()) {
                         AppPowerCard(
@@ -149,8 +165,28 @@ fun DashboardScreen(
                 }
 
                 // ── Optimize button
+                item { OptimizeButton(onClick = onNavigateToOptimize) }
+
+                // ── Pull to refresh hint (shown once)
                 item {
-                    OptimizeButton(onClick = onNavigateToOptimize)
+                    Row(
+                        modifier              = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment     = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            imageVector        = Icons.Rounded.SwipeDown,
+                            contentDescription = null,
+                            tint               = TextTertiary,
+                            modifier           = Modifier.size(14.dp),
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text     = "Tarik ke bawah untuk memperbarui",
+                            fontSize = 11.sp,
+                            color    = TextTertiary,
+                        )
+                    }
                 }
             }
         }
@@ -165,7 +201,7 @@ private fun DashboardHeader(
     onRefresh: () -> Unit,
 ) {
     val timeStr = remember(lastUpdated) {
-        SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(lastUpdated))
+        SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(lastUpdated))
     }
 
     Row(
@@ -182,7 +218,7 @@ private fun DashboardHeader(
             )
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text     = "Diperbarui pukul $timeStr",
+                    text     = "Diperbarui $timeStr",
                     fontSize = 12.sp,
                     color    = TextTertiary,
                 )
@@ -196,8 +232,8 @@ private fun DashboardHeader(
         IconButton(onClick = onRefresh) {
             if (isRefreshing) {
                 CircularProgressIndicator(
-                    modifier  = Modifier.size(24.dp),
-                    color     = BrandTeal,
+                    modifier    = Modifier.size(24.dp),
+                    color       = BrandTeal,
                     strokeWidth = 2.dp,
                 )
             } else {
@@ -216,10 +252,7 @@ private fun VitalityRingSection(
     data: DeviceHealthData,
     onNavigateToHistory: () -> Unit,
 ) {
-    NeuCard(
-        modifier = Modifier.fillMaxWidth(),
-        cornerRadius = 24.dp,
-    ) {
+    NeuCard(modifier = Modifier.fillMaxWidth(), cornerRadius = 24.dp) {
         Column(
             modifier            = Modifier.fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -240,13 +273,12 @@ private fun VitalityRingSection(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Sub-scores
             Row(
                 modifier              = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceEvenly,
             ) {
                 ScoreIndicator(score = data.batteryInfo.healthScore, label = "Baterai")
-                ScoreIndicator(score = data.ramInfo.healthScore, label = "Memori")
+                ScoreIndicator(score = data.ramInfo.healthScore,     label = "Memori")
                 ScoreIndicator(score = data.storageInfo.healthScore, label = "Simpanan")
             }
 
@@ -260,11 +292,7 @@ private fun VitalityRingSection(
                     tint               = BrandTeal,
                 )
                 Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    text     = "Lihat riwayat",
-                    fontSize = 12.sp,
-                    color    = BrandTeal,
-                )
+                Text(text = "Lihat riwayat", fontSize = 12.sp, color = BrandTeal)
             }
         }
     }
@@ -282,12 +310,12 @@ private fun QuickStatsRow(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         QuickStatCard(
-            modifier   = Modifier.weight(1f),
-            icon       = "🔋",
-            value      = "${data.batteryInfo.capacityPercent}%",
-            label      = "Baterai",
-            color      = scoreColor(data.batteryInfo.healthScore),
-            onClick    = onBatteryClick,
+            modifier = Modifier.weight(1f),
+            icon     = "🔋",
+            value    = "${data.batteryInfo.capacityPercent}%",
+            label    = "Baterai",
+            color    = scoreColor(data.batteryInfo.healthScore),
+            onClick  = onBatteryClick,
         )
         QuickStatCard(
             modifier = Modifier.weight(1f),
@@ -443,9 +471,9 @@ private fun LoadingCard() {
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             CircularProgressIndicator(
-                color        = BrandTeal,
-                strokeWidth  = 3.dp,
-                modifier     = Modifier.size(40.dp),
+                color       = BrandTeal,
+                strokeWidth = 3.dp,
+                modifier    = Modifier.size(40.dp),
             )
             Spacer(modifier = Modifier.height(12.dp))
             Text(
