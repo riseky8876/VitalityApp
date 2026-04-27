@@ -93,7 +93,7 @@ jobs:
         run: chmod +x gradlew
 
       - name: 🔑 Setup Keystore
-        # FIX: Menggunakan pembungkus ekspresi yang lebih kompatibel
+        # FIX: Menggunakan pembungkus ${{ }} untuk akses secrets di level step
         if: ${{ secrets.KEYSTORE_BASE64 != '' }}
         run: |
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > app/vitality-release.keystore
