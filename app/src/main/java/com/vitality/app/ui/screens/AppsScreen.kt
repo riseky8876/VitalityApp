@@ -11,6 +11,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -59,7 +60,6 @@ fun AppsScreen(
             Spacer(Modifier.height(20.dp))
 
             if (!hasPermission) {
-                // Permission required
                 NeuCard(modifier = Modifier.fillMaxWidth(), cornerRadius = 24.dp) {
                     Column(
                         modifier            = Modifier.fillMaxWidth(),
@@ -131,7 +131,6 @@ fun AppsScreen(
                     }
                 }
             } else {
-                // Summary card
                 val highRisk   = uiState.appPowerList.count { it.riskLevel == RiskLevel.HIGH }
                 val mediumRisk = uiState.appPowerList.count { it.riskLevel == RiskLevel.MEDIUM }
 
@@ -163,7 +162,6 @@ fun AppsScreen(
 
                 Spacer(Modifier.height(16.dp))
 
-                // Explanation
                 NeuCard(modifier = Modifier.fillMaxWidth()) {
                     Row(verticalAlignment = Alignment.Top) {
                         Text("ℹ️", fontSize = 18.sp)
@@ -179,13 +177,11 @@ fun AppsScreen(
 
                 Spacer(Modifier.height(16.dp))
 
-                // App list
                 uiState.appPowerList.forEachIndexed { index, app ->
                     AppDetailCard(app = app, rank = index + 1)
                     Spacer(Modifier.height(12.dp))
                 }
 
-                // General tip
                 NeuCard(modifier = Modifier.fillMaxWidth()) {
                     Column {
                         Text(
@@ -243,12 +239,10 @@ private fun AppDetailCard(app: AppPowerInfo, rank: Int) {
 
     NeuCard(modifier = Modifier.fillMaxWidth(), cornerRadius = 16.dp) {
         Column(modifier = Modifier.fillMaxWidth()) {
-            // Header row
             Row(
                 modifier          = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                // Rank badge
                 Box(
                     modifier         = Modifier
                         .size(32.dp)
@@ -291,34 +285,17 @@ private fun AppDetailCard(app: AppPowerInfo, rank: Int) {
             HorizontalDivider(color = NeuShadowDark.copy(alpha = 0.2f))
             Spacer(Modifier.height(10.dp))
 
-            // Stats
             Row(
                 modifier              = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceEvenly,
             ) {
-                AppStatMini(
-                    "⏱️",
-                    "${app.backgroundTimeMinutes} mnt",
-                    "Aktif (24j)",
-                    color,
-                )
-                AppStatMini(
-                    "🔋",
-                    "${String.format("%.1f", app.batteryUsagePercent)}%",
-                    "Penggunaan",
-                    color,
-                )
-                AppStatMini(
-                    "🔔",
-                    "${app.wakeCount}x",
-                    "Bangunkan",
-                    color,
-                )
+                AppStatMini("⏱️", "${app.backgroundTimeMinutes} mnt", "Aktif (24j)", color)
+                AppStatMini("🔋", "${"%.1f".format(app.batteryUsagePercent)}%", "Penggunaan", color)
+                AppStatMini("🔔", "${app.wakeCount}x", "Bangunkan", color)
             }
 
             Spacer(Modifier.height(10.dp))
 
-            // Description
             Text(
                 app.friendlyDescription,
                 fontSize  = 12.sp,
@@ -354,7 +331,7 @@ private fun AppDetailCard(app: AppPowerInfo, rank: Int) {
 private fun AppStatMini(emoji: String, value: String, label: String, color: Color) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Text(emoji, fontSize = 14.sp)
-        Text(value, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = color)
+        Text(value, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = color)
         Text(label, fontSize = 10.sp, color = TextTertiary)
     }
 }
